@@ -299,7 +299,7 @@ class DcrModel:
 
     def buildMatchedTemplate(self, exposure=None, order=3,
                              visitInfo=None, bbox=None, wcs=None, mask=None,
-                             splitSubfilters=False):
+                             splitSubfilters=True):
         """Create a DCR-matched template image for an exposure.
 
         Parameters
@@ -340,9 +340,17 @@ class DcrModel:
             raise ValueError("Either exposure or visitInfo, bbox, and wcs must be set.")
         dcrShift = calculateDcr(visitInfo, wcs, self.filter, len(self), splitSubfilters=splitSubfilters)
         templateImage = afwImage.ImageF(bbox)
+        refModel = self.getReferenceImage(bbox)
+        modelImages = []
+        for model in self:
+            model2 = (model[bbox].array - refModel)*self.dcrNumSubfilters + refModel
+            modelImages.append(model2)
         for subfilter, dcr in enumerate(dcrShift):
-            templateImage.array += applyDcr(self[subfilter][bbox].array, dcr,
+            templateImage.array += applyDcr(modelImages[subfilter], dcr,
                                             splitSubfilters=splitSubfilters, order=order)
+        # for subfilter, dcr in enumerate(dcrShift):
+        #     templateImage.array += applyDcr(self[subfilter][bbox].array, dcr,
+        #                                     splitSubfilters=splitSubfilters, order=order)
         return templateImage
 
     def buildMatchedExposure(self, exposure=None,
@@ -369,14 +377,16 @@ class DcrModel:
         templateExposure : `lsst.afw.image.exposureF`
             The DCR-matched template
         """
+        if bbox is None:
+            bbox = exposure.getBBox()
         templateImage = self.buildMatchedTemplate(exposure=exposure, visitInfo=visitInfo,
                                                   bbox=bbox, wcs=wcs, mask=mask)
         maskedImage = afwImage.MaskedImageF(bbox)
-        maskedImage.image = templateImage
-        maskedImage.mask = self.mask
-        maskedImage.variance = self.variance
+        maskedImage.image = templateImage[bbox]
+        maskedImage.mask = self.mask[bbox]
+        maskedImage.variance = self.variance[bbox]
         templateExposure = afwImage.ExposureF(bbox, wcs)
-        templateExposure.setMaskedImage(maskedImage)
+        templateExposure.setMaskedImage(maskedImage[bbox])
         templateExposure.setPsf(self.psf)
         templateExposure.setFilter(self.filter)
         return templateExposure
@@ -456,7 +466,7 @@ class DcrModel:
         """
         # ``regularizationFactor`` is the maximum change between subfilter images, so the maximum difference
         # between one subfilter image and the average will be the square root of that.
-        maxDiff = np.sqrt(regularizationFactor)
+        maxDiff = regularizationFactor/(self.dcrNumSubfilters - 1.)
         noiseLevel = self.calculateNoiseCutoff(modelImages[0], statsCtrl, bufferSize=5, mask=mask, bbox=bbox)
         referenceImage = self.getReferenceImage(bbox)
         badPixels = np.isnan(referenceImage) | (referenceImage <= 0.)
@@ -471,8 +481,8 @@ class DcrModel:
         smoothRef = ndimage.filters.gaussian_filter(referenceImage, filterWidth) + noiseLevel
 
         baseThresh = np.ones_like(referenceImage)
-        highThreshold = baseThresh*maxDiff
         lowThreshold = baseThresh/maxDiff
+        highThreshold = baseThresh + lowThreshold*(maxDiff - 1.)
         for subfilter, model in enumerate(modelImages):
             smoothModel = ndimage.filters.gaussian_filter(model.array, filterWidth) + noiseLevel
             relativeModel = smoothModel/smoothRef
