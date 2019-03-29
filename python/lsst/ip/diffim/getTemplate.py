@@ -137,7 +137,9 @@ class GetCoaddAsTemplateTask(pipeBase.Task):
                     continue
                 self.log.info("Constructing DCR-matched template for patch %s" % patchArgDict)
                 dcrModel = DcrModel.fromDataRef(sensorRef, **patchArgDict)
-                coaddPatch = dcrModel.buildMatchedExposure(bbox=patchSubBBox,
+                dcrBBox = afwGeom.Box2I(patchSubBBox)
+                dcrBBox.grow(-10)
+                coaddPatch = dcrModel.buildMatchedExposure(bbox=dcrBBox,
                                                            wcs=coaddWcs,
                                                            visitInfo=exposure.getInfo().getVisitInfo())
             else:
